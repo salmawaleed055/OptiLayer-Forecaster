@@ -4,7 +4,7 @@
 ## Project Overview
 
 ### Key Problems Addressed:
-* **Demand Fluctuations:** Unpredictable shifts due to changing infrastructure projects and renewable energy expansion[cite: 8, 31].
+* **Demand Fluctuations:** Unpredictable shifts due to changing infrastructure projects and renewable energy expansion.
 * **Price Volatility:** High sensitivity to global commodity price trends in polymers.
 * **Inventory Inefficiency:** Eliminating the risks of overstocking capital and understocking raw materials.
 

@@ -1,20 +1,29 @@
 """
 ================================================================================
-MODEL 1: UTILITY CABLE HEALTH PREDICTION MODEL
+MODEL 1: CABLE HEALTH PREDICTION MODEL
 ================================================================================
 ARABCAB Scientific Competition - AI-Based Demand Forecasting
 
 PURPOSE:
-    Predict cable health from utility inspection data using EXPLAINABLE models:
-    1. Health Index (0-100) - Linear Regression
-    2. Risk Level (Low/Medium/High/Critical) - Logistic Regression  
-    3. Replacement Urgency (years) - Linear Regression
+    Predict cable health from utility inspection data using EXPLAINABLE models.
+    
+INPUT DATA (15-KV XLPE Cable.xlsx):
+    - ID: Cable identifier
+    - Age: Cable age in years
+    - Partial Discharge: PD measurement (0-1 normalized)
+    - Visual Condition: Good/Medium/Poor
+    - Neutral Corrosion: Corrosion index (0-1)
+    - Loading: Load value
+    - Health Index: 1-5 scale (target variable)
+
+MODELS:
+    1. Health Index Prediction (Ridge Regression) - Predicts 1-5 health score
+    2. Risk Level Classification (Logistic Regression) - Low/Medium/High/Critical
 
 WHY LINEAR REGRESSION (Explainable AI)?
     - Coefficients show EXACTLY how each feature impacts predictions
     - Required for regulatory compliance in utilities
     - Judges can understand WHY the model makes decisions
-    - Each coefficient = direct business insight
 ================================================================================
 """
 
@@ -31,44 +40,74 @@ import os
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
-DATA_PATH = 'utility_inspection_data.csv'
+DATA_PATH = '15-KV XLPE Cable.xlsx'
 MODEL_DIR = 'models'
 RANDOM_STATE = 42
 
-NUMERIC_FEATURES = [
-    'cable_age_years', 'cable_length_km', 'soil_corrosivity_index',
-    'ambient_temp_C', 'humidity_percent', 'load_factor',
-    'overload_events_last_year', 'fault_history_count', 'maintenance_score',
-    'months_since_maintenance', 'partial_discharge_pC', 
-    'insulation_resistance_MOhm', 'tan_delta',
-]
-
-CATEGORICAL_FEATURES = ['region', 'application', 'voltage_class']
+# Features from real data
+NUMERIC_FEATURES = ['Age', 'Partial Discharge', 'Neutral Corrosion', 'Loading']
+CATEGORICAL_FEATURES = ['Visual Condition']
 
 # ============================================================================
 # DATA LOADING
 # ============================================================================
 def load_data(filepath):
     print("\n" + "="*60)
-    print("STEP 1: LOADING DATA")
+    print("STEP 1: LOADING REAL CABLE DATA")
     print("="*60)
     
-    df = pd.read_csv(filepath)
-    print(f"✅ Loaded {len(df)} records from {filepath}")
+    df = pd.read_excel(filepath)
+    df.columns = df.columns.str.strip()  # Clean column names
     
-    # One-hot encode categorical variables
+    print(f"✅ Loaded {len(df)} cable records from {filepath}")
+    print(f"✅ Columns: {df.columns.tolist()}")
+    
+    # One-hot encode Visual Condition
     df_encoded = pd.get_dummies(df, columns=CATEGORICAL_FEATURES, drop_first=True)
     
     # Get all feature columns
     feature_cols = NUMERIC_FEATURES.copy()
     for cat in CATEGORICAL_FEATURES:
-        feature_cols.extend([c for c in df_encoded.columns if c.startswith(cat + '_')])
+        feature_cols.extend([c for c in df_encoded.columns if c.startswith(cat)])
     
-    print(f"✅ Features: {len(feature_cols)} (numeric + encoded categorical)")
+    print(f"✅ Features for model: {feature_cols}")
+    
+    # Add derived columns
+    # Risk Level based on Health Index (1-5 scale)
+    def get_risk_level(health):
+        if health >= 5:
+            return 'Low'
+        elif health >= 4:
+            return 'Medium'
+        elif health >= 3:
+            return 'High'
+        else:
+            return 'Critical'
+    
+    df['risk_level'] = df['Health Index'].apply(get_risk_level)
+    df_encoded['risk_level'] = df['risk_level']
+    
+    # Replacement Urgency (years) - Health 1→1yr, Health 5→15yr
+    df['replacement_urgency_years'] = ((df['Health Index'] / 5) * 15).clip(0.5, 15).round(1)
+    df_encoded['replacement_urgency_years'] = df['replacement_urgency_years']
+    
+    # XLPE Demand estimation
+    cable_length_km = 2.0  # Average 15kV cable length
+    voltage_multiplier = 1.5  # MV cable
+    urgency_factor = (15 - df['replacement_urgency_years']) / 15
+    df['xlpe_demand_tons'] = (cable_length_km * voltage_multiplier * 0.5 * (1 + urgency_factor)).round(2)
+    df_encoded['xlpe_demand_tons'] = df['xlpe_demand_tons']
+    
+    print(f"\n📊 Health Index Distribution:")
+    print(df['Health Index'].value_counts().sort_index().to_string())
+    
+    print(f"\n📊 Risk Level Distribution:")
+    print(df['risk_level'].value_counts().to_string())
+    
     return df, df_encoded, feature_cols
 
 # ============================================================================
-# MODEL 1A: HEALTH INDEX (Linear Regression)
+# MODEL 1A: HEALTH INDEX (Ridge Regression)
 # ============================================================================
 def train_health_model(df_encoded, feature_cols):
     print("\n" + "="*60)
@@ -76,7 +115,7 @@ def train_health_model(df_encoded, feature_cols):
     print("="*60)
     
     X = df_encoded[feature_cols]
-    y = df_encoded['health_index']
+    y = df_encoded['Health Index']
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_STATE)
     
@@ -98,8 +137,8 @@ def train_health_model(df_encoded, feature_cols):
     
     print(f"\n📊 HEALTH INDEX MODEL PERFORMANCE:")
     print(f"   R² Score:     {metrics['r2']:.4f}")
-    print(f"   MAE:          {metrics['mae']:.2f} points")
-    print(f"   RMSE:         {metrics['rmse']:.2f} points")
+    print(f"   MAE:          {metrics['mae']:.3f} (on 1-5 scale)")
+    print(f"   RMSE:         {metrics['rmse']:.3f}")
     print(f"   Cross-Val R²: {metrics['cv_r2']:.4f}")
     
     # Feature importance (coefficients)
@@ -109,11 +148,11 @@ def train_health_model(df_encoded, feature_cols):
         'abs_importance': np.abs(model.coef_)
     }).sort_values('abs_importance', ascending=False)
     
-    print("\n📊 TOP 10 FEATURES (Explainable AI):")
+    print("\n📊 FEATURE IMPORTANCE (Explainable AI):")
     print("   (+ improves health, - degrades health)\n")
-    for _, row in coef_df.head(10).iterrows():
+    for _, row in coef_df.iterrows():
         sign = "↑" if row['coefficient'] > 0 else "↓"
-        print(f"   {sign} {row['feature']:<35} {row['coefficient']:>8.3f}")
+        print(f"   {sign} {row['feature']:<25} {row['coefficient']:>8.4f}")
     
     return model, scaler, metrics, coef_df
 
@@ -149,7 +188,7 @@ def train_risk_model(df_encoded, feature_cols):
     return model, scaler, le, accuracy
 
 # ============================================================================
-# MODEL 1C: REPLACEMENT URGENCY (Linear Regression)
+# MODEL 1C: REPLACEMENT URGENCY (Ridge Regression)
 # ============================================================================
 def train_urgency_model(df_encoded, feature_cols):
     print("\n" + "="*60)
@@ -190,40 +229,57 @@ def aggregate_for_model2(df):
     print("STEP 5: AGGREGATING DATA FOR MODEL 2 (Market Demand)")
     print("="*60)
     
-    df['inspection_date'] = pd.to_datetime(df['inspection_date'])
-    df['year'] = df['inspection_date'].dt.year
-    df['quarter'] = df['inspection_date'].dt.quarter
-    
-    # Regional demand aggregation
-    regional = df.groupby(['region', 'year', 'quarter']).agg({
+    # Aggregation by Health Index
+    health_demand = df.groupby('Health Index').agg({
         'xlpe_demand_tons': 'sum',
-        'inspection_id': 'count',
-        'health_index': 'mean',
+        'ID': 'count',
+        'Age': 'mean',
+        'Partial Discharge': 'mean',
+        'Neutral Corrosion': 'mean'
+    }).reset_index()
+    health_demand.columns = ['health_index', 'total_xlpe_tons', 'cable_count', 
+                              'avg_age', 'avg_pd', 'avg_corrosion']
+    
+    # Aggregation by Risk Level
+    risk_demand = df.groupby('risk_level').agg({
+        'xlpe_demand_tons': 'sum',
+        'ID': 'count',
         'replacement_urgency_years': 'mean'
     }).reset_index()
-    regional.columns = ['region', 'year', 'quarter', 'total_xlpe_tons', 
-                        'cable_count', 'avg_health', 'avg_urgency']
+    risk_demand.columns = ['risk_level', 'total_xlpe_tons', 'cable_count', 'avg_urgency']
     
-    # Urgency-based demand
-    df['urgency_band'] = pd.cut(df['replacement_urgency_years'],
-                                 bins=[0, 1, 3, 7, 15],
-                                 labels=['Immediate', 'Short-term', 'Medium-term', 'Long-term'])
+    # Aggregation by Urgency Band
+    df['urgency_band'] = pd.cut(
+        df['replacement_urgency_years'],
+        bins=[0, 3, 6, 10, 15],
+        labels=['Immediate (0-3yr)', 'Short-term (3-6yr)', 
+                'Medium-term (6-10yr)', 'Long-term (10-15yr)']
+    )
     
-    urgency = df.groupby(['region', 'urgency_band']).agg({
-        'xlpe_demand_tons': 'sum', 'inspection_id': 'count'
+    urgency_demand = df.groupby('urgency_band', observed=True).agg({
+        'xlpe_demand_tons': 'sum',
+        'ID': 'count'
     }).reset_index()
+    urgency_demand.columns = ['urgency_band', 'xlpe_demand_tons', 'cable_count']
     
     # Save for Model 2
-    regional.to_csv('model2_regional_demand.csv', index=False)
-    urgency.to_csv('model2_urgency_demand.csv', index=False)
+    health_demand.to_csv('model2_health_demand.csv', index=False)
+    risk_demand.to_csv('model2_risk_demand.csv', index=False)
+    urgency_demand.to_csv('model2_urgency_demand.csv', index=False)
     
-    print("\n📊 REGIONAL XLPE DEMAND (Tons):")
-    print(df.groupby('region')['xlpe_demand_tons'].agg(['sum', 'mean']).round(2).to_string())
+    print("\n📊 XLPE DEMAND BY RISK LEVEL:")
+    print(risk_demand.to_string(index=False))
     
-    print("\n✅ Saved: model2_regional_demand.csv")
+    print("\n📊 XLPE DEMAND BY URGENCY:")
+    print(urgency_demand.to_string(index=False))
+    
+    print(f"\n📊 TOTAL XLPE DEMAND: {df['xlpe_demand_tons'].sum():.2f} tons")
+    
+    print("\n✅ Saved: model2_health_demand.csv")
+    print("✅ Saved: model2_risk_demand.csv")
     print("✅ Saved: model2_urgency_demand.csv")
     
-    return regional, urgency
+    return health_demand, risk_demand, urgency_demand
 
 # ============================================================================
 # SAVE MODELS
@@ -262,11 +318,11 @@ def save_models(health_model, health_scaler, health_coef,
 # ============================================================================
 def main():
     print("\n" + "="*60)
-    print("  ARABCAB - MODEL 1: UTILITY HEALTH PREDICTION")
-    print("  Explainable AI for Cable Condition Assessment")
+    print("  ARABCAB - MODEL 1: CABLE HEALTH PREDICTION")
+    print("  Using Real 15-KV XLPE Cable Data (2500 records)")
     print("="*60)
     
-    # Load data
+    # Load real data
     df, df_encoded, feature_cols = load_data(DATA_PATH)
     
     # Train models
@@ -289,7 +345,7 @@ def main():
     print(f"""
     ┌────────────────────────────────────────────────────────┐
     │  HEALTH INDEX MODEL (Ridge Regression)                 │
-    │  • R²: {health_metrics['r2']:.4f}  • MAE: {health_metrics['mae']:.2f} pts              │
+    │  • R²: {health_metrics['r2']:.4f}  • MAE: {health_metrics['mae']:.3f} (1-5 scale)       │
     ├────────────────────────────────────────────────────────┤
     │  RISK CLASSIFIER (Logistic Regression)                 │
     │  • Accuracy: {risk_acc:.2%}                               │

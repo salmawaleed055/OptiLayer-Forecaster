@@ -1,13 +1,5 @@
-region,urgency_band,xlpe_demand_tons,inspection_id
-Bahrain,Immediate,99.06,7
-Bahrain,Short-term,23.189999999999998,5
-Bahrain,Medium-term,764.27,37
-Bahrain,Long-term,2759.18,351
-Egypt,Immediate,605.75,41
-Egypt,Short-term,707.55,54
-Egypt,Medium-term,2581.2,206
-Egypt,Long-term,5944.07,699
-UAE,Immediate,0.0,0
-UAE,Short-term,0.0,0
-UAE,Medium-term,4.34,2
-UAE,Long-term,4402.73,598
+urgency_band,xlpe_demand_tons,cable_count
+Immediate (0-3yr),1012.5000000000001,375
+Short-term (3-6yr),960.0,400
+Medium-term (6-10yr),1470.0,700
+Long-term (10-15yr),1702.5,1025

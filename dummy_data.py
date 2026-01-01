@@ -1,173 +1,167 @@
 """
 ================================================================================
-ARABCAB Competition - Utility Inspection Data Generator
+ARABCAB Competition - Data Preprocessing
 ================================================================================
-Generates realistic synthetic data representing utility company cable inspections.
-This simulates data from: Egypt (EETC), UAE (DEWA, ADDC), Bahrain (EWA)
+Converts the real 15-KV XLPE Cable data into the format needed for Model 1.
+Adds derived features for demand forecasting.
 ================================================================================
 """
 
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
 
-np.random.seed(42)
-
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
-N_RECORDS = 2000
-
-REGIONS = {
-    'Egypt': {'weight': 0.50, 'avg_cable_age': 22, 'maintenance_quality': 0.65, 
-              'soil_corrosivity': 0.7, 'avg_load_factor': 0.85},
-    'UAE': {'weight': 0.30, 'avg_cable_age': 12, 'maintenance_quality': 0.90, 
-            'soil_corrosivity': 0.8, 'avg_load_factor': 0.70},
-    'Bahrain': {'weight': 0.20, 'avg_cable_age': 18, 'maintenance_quality': 0.80, 
-                'soil_corrosivity': 0.85, 'avg_load_factor': 0.75}
-}
-
-APPLICATIONS = {
-    'Power Transmission (HV)': {'criticality': 0.95},
-    'Power Distribution (MV)': {'criticality': 0.80},
-    'Industrial': {'criticality': 0.70},
-    'Renewable Energy': {'criticality': 0.85},
-    'Telecommunications': {'criticality': 0.60},
-    'Construction/Building': {'criticality': 0.50},
-}
-
-VOLTAGE_CLASSES = ['LV (<1kV)', 'MV (1-35kV)', 'HV (35-150kV)', 'EHV (>150kV)']
-
-# ============================================================================
-# DATA GENERATION
-# ============================================================================
-
-def generate_inspection_date():
-    start = datetime(2023, 1, 1)
-    end = datetime(2025, 12, 31)
-    return start + timedelta(days=np.random.randint(0, (end - start).days))
-
-def generate_cable_record(region_name, region_config):
-    cable_age = int(np.clip(np.random.normal(region_config['avg_cable_age'], 
-                                              region_config['avg_cable_age'] * 0.4), 1, 50))
-    application = np.random.choice(list(APPLICATIONS.keys()))
-    voltage_class = np.random.choice(VOLTAGE_CLASSES, p=[0.30, 0.40, 0.20, 0.10])
+def load_and_preprocess_real_data(filepath='15-KV XLPE Cable.xlsx'):
+    """
+    Load the real utility cable inspection data and preprocess it.
     
-    # Cable length varies by application
-    if 'Transmission' in application:
-        cable_length = np.random.uniform(5, 50)
-    elif 'Distribution' in application:
-        cable_length = np.random.uniform(0.5, 10)
-    else:
-        cable_length = np.random.uniform(0.1, 5)
+    Input columns:
+        - ID: Cable identifier
+        - Age: Cable age in years
+        - Partial Discharge: PD measurement (0-1 normalized)
+        - Visual Condition: Good/Medium/Poor
+        - Neutral Corrosion: Corrosion index (0-1)
+        - Loading: Load value
+        - Health Index: 1-5 scale (1=worst, 5=best)
     
-    # Environmental & operational factors
-    soil_corrosivity = np.clip(np.random.normal(region_config['soil_corrosivity'], 0.1), 0, 1)
-    ambient_temp = np.random.normal(35 if region_name != 'Egypt' else 30, 5)
-    humidity = np.random.normal(60 if region_name == 'Bahrain' else 45, 10)
-    load_factor = np.clip(np.random.normal(region_config['avg_load_factor'], 0.1), 0.3, 1.0)
-    overload_events = np.random.poisson(2 if load_factor > 0.8 else 0.5)
-    fault_history = np.random.poisson(cable_age / 10)
-    maintenance_score = np.clip(np.random.normal(region_config['maintenance_quality'], 0.15), 0, 1)
-    last_maintenance_months = np.random.randint(1, 36)
+    Output: Preprocessed DataFrame ready for Model 1
+    """
     
-    # Diagnostic measurements (key indicators)
-    base_pd = 5 + (cable_age * 0.8) + (fault_history * 3) - (maintenance_score * 10)
-    partial_discharge_pC = max(0, np.random.normal(base_pd, 5))
-    base_ir = 5000 - (cable_age * 80) - (soil_corrosivity * 500) + (maintenance_score * 1000)
-    insulation_resistance = max(100, np.random.normal(base_ir, 500))
-    tan_delta = max(0.0005, np.random.normal(0.001 + (cable_age * 0.0002) + (fault_history * 0.001), 0.001))
+    print("=" * 60)
+    print("ARABCAB - Loading Real Cable Data")
+    print("=" * 60)
     
-    return {
-        'inspection_date': generate_inspection_date(),
-        'region': region_name,
-        'application': application,
-        'voltage_class': voltage_class,
-        'installation_year': 2025 - cable_age,
-        'cable_age_years': cable_age,
-        'cable_length_km': round(cable_length, 2),
-        'rated_voltage_kV': {'LV (<1kV)': 0.4, 'MV (1-35kV)': 11, 'HV (35-150kV)': 66, 'EHV (>150kV)': 220}[voltage_class],
-        'soil_corrosivity_index': round(soil_corrosivity, 3),
-        'ambient_temp_C': round(ambient_temp, 1),
-        'humidity_percent': round(humidity, 1),
-        'load_factor': round(load_factor, 3),
-        'overload_events_last_year': overload_events,
-        'fault_history_count': fault_history,
-        'maintenance_score': round(maintenance_score, 3),
-        'months_since_maintenance': last_maintenance_months,
-        'partial_discharge_pC': round(partial_discharge_pC, 2),
-        'insulation_resistance_MOhm': round(insulation_resistance, 0),
-        'tan_delta': round(tan_delta, 5),
-    }
-
-def calculate_health_metrics(df):
-    """Calculate target variables for Model 1"""
+    # Load Excel file
+    df = pd.read_excel(filepath)
     
-    # HEALTH INDEX (0-100)
-    df['health_index'] = (
-        100 - (df['cable_age_years'] * 1.2) - (df['partial_discharge_pC'] * 0.5)
-        - (df['fault_history_count'] * 5) - ((1 - df['maintenance_score']) * 15)
-        - (df['overload_events_last_year'] * 3) + (df['insulation_resistance_MOhm'] / 200)
-        - (df['tan_delta'] * 500) - (df['soil_corrosivity_index'] * 10)
-    ).clip(0, 100).round(1)
+    # Clean column names (remove any whitespace)
+    df.columns = df.columns.str.strip()
     
-    # RISK LEVEL (using apply instead of np.select for compatibility)
+    print(f"✅ Loaded {len(df)} cable records from {filepath}")
+    print(f"✅ Columns: {df.columns.tolist()}")
+    
+    # =========================================================================
+    # FEATURE ENGINEERING
+    # =========================================================================
+    
+    # 1. Convert Visual Condition to numeric (for ML)
+    condition_map = {'Good': 1, 'Medium': 2, 'Poor': 3}
+    df['visual_condition_score'] = df['Visual Condition'].map(condition_map)
+    
+    # 2. Create Risk Level based on Health Index (1-5 scale)
     def get_risk_level(health):
-        if health >= 70:
+        if health >= 5:
             return 'Low'
-        elif health >= 50:
+        elif health >= 4:
             return 'Medium'
-        elif health >= 30:
+        elif health >= 3:
             return 'High'
-        else:
+        else:  # 1 or 2
             return 'Critical'
     
-    df['risk_level'] = df['health_index'].apply(get_risk_level)
+    df['risk_level'] = df['Health Index'].apply(get_risk_level)
     
-    # REPLACEMENT URGENCY (years)
-    criticality_map = {app: cfg['criticality'] for app, cfg in APPLICATIONS.items()}
-    df['criticality_factor'] = df['application'].map(criticality_map)
-    base_urgency = (df['health_index'] / 100) * 15
-    df['replacement_urgency_years'] = (base_urgency * (2 - df['criticality_factor'])).clip(0.5, 15).round(1)
+    # 3. Calculate Replacement Urgency (years)
+    # Lower health = more urgent replacement
+    # Scale: Health 1 → 1 year, Health 5 → 15 years
+    df['replacement_urgency_years'] = (df['Health Index'] / 5) * 15
+    df['replacement_urgency_years'] = df['replacement_urgency_years'].clip(0.5, 15).round(1)
     
-    # XLPE DEMAND (tons) - feeds into Model 2
-    voltage_mult = {'LV (<1kV)': 0.8, 'MV (1-35kV)': 1.5, 'HV (35-150kV)': 3.0, 'EHV (>150kV)': 5.5}
-    df['voltage_multiplier'] = df['voltage_class'].map(voltage_mult)
-    urgency_factor = (15 - df['replacement_urgency_years']) / 15
-    df['xlpe_demand_tons'] = (df['cable_length_km'] * df['voltage_multiplier'] * 0.5 * (1 + urgency_factor)).round(2)
+    # 4. Estimate XLPE Demand (tons)
+    # Based on: cables needing replacement sooner = higher immediate demand
+    # Assume average cable length ~2km for 15kV distribution cables
+    cable_length_km = 2.0
+    voltage_multiplier = 1.5  # MV cable (15kV is medium voltage)
     
-    df = df.drop(columns=['criticality_factor', 'voltage_multiplier'])
+    urgency_factor = (15 - df['replacement_urgency_years']) / 15  # 0 to 1
+    df['xlpe_demand_tons'] = (
+        cable_length_km * voltage_multiplier * 0.5 * (1 + urgency_factor)
+    ).round(2)
+    
+    # 5. Normalize Health Index to 0-100 scale for consistency
+    df['health_index_100'] = (df['Health Index'] / 5 * 100).round(1)
+    
+    print(f"\n📊 Data Summary:")
+    print(f"   Age range: {df['Age'].min()} - {df['Age'].max()} years")
+    print(f"   Health Index distribution:")
+    print(df['Health Index'].value_counts().sort_index().to_string())
+    print(f"\n   Risk Level distribution:")
+    print(df['risk_level'].value_counts().to_string())
+    
     return df
 
-def generate_dataset():
-    records = []
-    for region_name, region_config in REGIONS.items():
-        for _ in range(int(N_RECORDS * region_config['weight'])):
-            records.append(generate_cable_record(region_name, region_config))
+def create_model2_inputs(df):
+    """
+    Aggregate cable-level data for Model 2 (Market Demand Forecasting)
+    Since we don't have region data, we'll aggregate by risk level and health
+    """
     
-    df = pd.DataFrame(records)
-    df['inspection_id'] = [f"INS-{i:05d}" for i in range(1, len(df) + 1)]
-    df = calculate_health_metrics(df)
+    print("\n" + "=" * 60)
+    print("Creating Model 2 Input Files")
+    print("=" * 60)
     
-    # Reorder columns
-    cols = ['inspection_id', 'inspection_date', 'region', 'application', 'voltage_class',
-            'installation_year', 'cable_age_years', 'cable_length_km', 'rated_voltage_kV',
-            'soil_corrosivity_index', 'ambient_temp_C', 'humidity_percent', 'load_factor',
-            'overload_events_last_year', 'fault_history_count', 'maintenance_score',
-            'months_since_maintenance', 'partial_discharge_pC', 'insulation_resistance_MOhm',
-            'tan_delta', 'health_index', 'risk_level', 'replacement_urgency_years', 'xlpe_demand_tons']
-    return df[cols]
+    # Aggregation by Health Index
+    health_demand = df.groupby('Health Index').agg({
+        'xlpe_demand_tons': 'sum',
+        'ID': 'count',
+        'Age': 'mean',
+        'Partial Discharge': 'mean',
+        'Neutral Corrosion': 'mean'
+    }).reset_index()
+    health_demand.columns = ['health_index', 'total_xlpe_tons', 'cable_count', 
+                              'avg_age', 'avg_pd', 'avg_corrosion']
+    
+    # Aggregation by Risk Level
+    risk_demand = df.groupby('risk_level').agg({
+        'xlpe_demand_tons': 'sum',
+        'ID': 'count',
+        'replacement_urgency_years': 'mean'
+    }).reset_index()
+    risk_demand.columns = ['risk_level', 'total_xlpe_tons', 'cable_count', 'avg_urgency']
+    
+    # Aggregation by Urgency Band
+    df['urgency_band'] = pd.cut(
+        df['replacement_urgency_years'],
+        bins=[0, 3, 6, 10, 15],
+        labels=['Immediate (0-3yr)', 'Short-term (3-6yr)', 
+                'Medium-term (6-10yr)', 'Long-term (10-15yr)']
+    )
+    
+    urgency_demand = df.groupby('urgency_band', observed=True).agg({
+        'xlpe_demand_tons': 'sum',
+        'ID': 'count'
+    }).reset_index()
+    urgency_demand.columns = ['urgency_band', 'xlpe_demand_tons', 'cable_count']
+    
+    # Save files
+    health_demand.to_csv('model2_health_demand.csv', index=False)
+    risk_demand.to_csv('model2_risk_demand.csv', index=False)
+    urgency_demand.to_csv('model2_urgency_demand.csv', index=False)
+    
+    print("✅ Saved: model2_health_demand.csv")
+    print("✅ Saved: model2_risk_demand.csv")
+    print("✅ Saved: model2_urgency_demand.csv")
+    
+    print(f"\n📊 Total XLPE Demand: {df['xlpe_demand_tons'].sum():.2f} tons")
+    print(f"📊 Cables by Risk Level:")
+    print(risk_demand.to_string(index=False))
+    
+    return health_demand, risk_demand, urgency_demand
 
-# ============================================================================
-# MAIN
-# ============================================================================
+
 if __name__ == "__main__":
-    print("=" * 60)
-    print("ARABCAB - Utility Inspection Data Generator")
-    print("=" * 60)
+    # Load and preprocess real data
+    df = load_and_preprocess_real_data('15-KV XLPE Cable.xlsx')
     
-    df = generate_dataset()
-    df.to_csv('utility_inspection_data.csv', index=False)
+    # Save preprocessed data
+    df.to_csv('cable_data_processed.csv', index=False)
+    print(f"\n✅ Saved preprocessed data to: cable_data_processed.csv")
+    
+    # Create Model 2 inputs
+    create_model2_inputs(df)
+    
+    print("\n" + "=" * 60)
+    print("Data preprocessing complete!")
+    print("=" * 60)
     
     print(f"\n✅ Generated {len(df)} inspection records")
     print(f"✅ Saved to: utility_inspection_data.csv")

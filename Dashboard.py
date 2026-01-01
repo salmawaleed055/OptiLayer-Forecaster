@@ -3,7 +3,7 @@
 ARABCAB Competition - CableFlow AI Dashboard
 ================================================================================
 Interactive Decision Support System for Cable Health & XLPE Demand Forecasting
-Integrates with Model 1 (Health Prediction) outputs
+Works with REAL 15-KV XLPE Cable inspection data (2500 records)
 ================================================================================
 """
 
@@ -30,11 +30,13 @@ def load_models():
         risk_encoder = joblib.load('models/risk_encoder.pkl')
         urgency_model = joblib.load('models/urgency_regressor.pkl')
         urgency_scaler = joblib.load('models/urgency_scaler.pkl')
+        feature_names = joblib.load('models/feature_names.pkl')
         coefficients = pd.read_csv('models/health_coefficients.csv')
         return {
             'health': (health_model, health_scaler),
             'risk': (risk_model, risk_scaler, risk_encoder),
             'urgency': (urgency_model, urgency_scaler),
+            'feature_names': feature_names,
             'coefficients': coefficients,
             'loaded': True
         }
@@ -44,20 +46,43 @@ def load_models():
 
 @st.cache_data
 def load_data():
-    """Load inspection data and aggregated demand"""
+    """Load real cable data and aggregated demand"""
     try:
-        inspection_df = pd.read_csv('utility_inspection_data.csv')
-        regional_demand = pd.read_csv('model2_regional_demand.csv')
-        urgency_demand = pd.read_csv('model2_urgency_demand.csv')
-        return inspection_df, regional_demand, urgency_demand
-    except:
+        # Load real cable data
+        cable_df = pd.read_excel('15-KV XLPE Cable.xlsx')
+        cable_df.columns = cable_df.columns.str.strip()
+        
+        # Add derived columns
+        def get_risk_level(health):
+            if health >= 5: return 'Low'
+            elif health >= 4: return 'Medium'
+            elif health >= 3: return 'High'
+            else: return 'Critical'
+        
+        cable_df['risk_level'] = cable_df['Health Index'].apply(get_risk_level)
+        cable_df['replacement_urgency_years'] = ((cable_df['Health Index'] / 5) * 15).clip(0.5, 15).round(1)
+        
+        urgency_factor = (15 - cable_df['replacement_urgency_years']) / 15
+        cable_df['xlpe_demand_tons'] = (2.0 * 1.5 * 0.5 * (1 + urgency_factor)).round(2)
+        
+        # Load aggregated demand files
+        try:
+            risk_demand = pd.read_csv('model2_risk_demand.csv')
+            urgency_demand = pd.read_csv('model2_urgency_demand.csv')
+        except:
+            risk_demand = None
+            urgency_demand = None
+            
+        return cable_df, risk_demand, urgency_demand
+    except Exception as e:
+        st.error(f"Error loading data: {e}")
         return None, None, None
 
 models = load_models()
-inspection_df, regional_demand, urgency_demand = load_data()
+cable_df, risk_demand, urgency_demand = load_data()
 
 # --- HEADER ---
-st.title("⚡ CableFlow-AI: Cable Health & Demand Dashboard")
+st.title("⚡ CableFlow-AI: 15-KV XLPE Cable Health Dashboard")
 st.markdown("**ARABCAB Competition** | AI-Based Demand Forecasting for Cable Industry")
 st.divider()
 
@@ -66,8 +91,9 @@ st.sidebar.header("🎛️ Navigation")
 page = st.sidebar.radio("Select View", [
     "🏠 Overview",
     "🔬 Cable Health Predictor", 
-    "📊 Regional Demand Analysis",
-    "🧠 Model Explainability"
+    "📊 Demand Analysis",
+    "🧠 Model Explainability",
+    "📋 Data Explorer"
 ])
 
 # ============================================================================
@@ -78,32 +104,39 @@ if page == "🏠 Overview":
     
     col1, col2, col3, col4 = st.columns(4)
     
-    if inspection_df is not None:
-        col1.metric("📋 Total Inspections", f"{len(inspection_df):,}")
-        col2.metric("🌍 Regions Covered", inspection_df['region'].nunique())
-        col3.metric("⚠️ Critical Cables", len(inspection_df[inspection_df['risk_level'] == 'Critical']))
-        col4.metric("📦 Total XLPE Demand", f"{inspection_df['xlpe_demand_tons'].sum():,.0f} Tons")
+    if cable_df is not None:
+        critical_count = len(cable_df[cable_df['risk_level'] == 'Critical'])
+        total_demand = cable_df['xlpe_demand_tons'].sum()
+        
+        col1.metric("📋 Total Cables", f"{len(cable_df):,}")
+        col2.metric("📅 Avg Cable Age", f"{cable_df['Age'].mean():.1f} years")
+        col3.metric("⚠️ Critical Cables", f"{critical_count}")
+        col4.metric("📦 Total XLPE Demand", f"{total_demand:,.0f} Tons")
     
     st.divider()
     
-    # Two-Model Architecture Diagram
+    # Two-Model Architecture
     st.subheader("🏗️ Two-Stage AI Architecture")
     
     col_left, col_right = st.columns(2)
     
     with col_left:
         st.info("""
-        **MODEL 1: Utility Health Prediction**
+        **MODEL 1: Cable Health Prediction**
         
-        *Input:* Cable inspection data (age, diagnostics, environment)
+        *Input Features (from real data):*
+        - Age (years)
+        - Partial Discharge (0-1)
+        - Visual Condition (Good/Medium/Poor)
+        - Neutral Corrosion (0-1)
+        - Loading
         
         *Outputs:*
-        - Health Index (0-100)
+        - Health Index (1-5)
         - Risk Level (Low/Medium/High/Critical)
         - Replacement Urgency (years)
-        - Estimated XLPE Demand (tons)
         
-        *Method:* Explainable Linear Regression
+        *Method:* Explainable Ridge Regression
         """)
     
     with col_right:
@@ -113,23 +146,36 @@ if page == "🏠 Overview":
         *Input:* Aggregated demand from Model 1
         
         *Outputs:*
-        - Regional XLPE market size
-        - Growth projections
-        - Revenue impact analysis
+        - XLPE market size by risk level
+        - Demand by urgency timeline
+        - Replacement prioritization
         
-        *Purpose:* Strategic business forecasting
+        *Purpose:* Strategic procurement planning
         """)
     
-    # Risk Distribution Chart
-    if inspection_df is not None:
-        st.subheader("📈 Cable Risk Distribution by Region")
+    # Health Index Distribution
+    if cable_df is not None:
+        st.subheader("📈 Cable Health Distribution")
         
-        risk_counts = inspection_df.groupby(['region', 'risk_level']).size().reset_index(name='count')
-        fig = px.bar(risk_counts, x='region', y='count', color='risk_level',
-                     color_discrete_map={'Low': '#2ecc71', 'Medium': '#f39c12', 
-                                         'High': '#e74c3c', 'Critical': '#8e44ad'},
-                     barmode='group', title="Cable Count by Risk Level per Region")
-        st.plotly_chart(fig, use_container_width=True)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            health_counts = cable_df['Health Index'].value_counts().sort_index()
+            fig_health = px.bar(x=health_counts.index, y=health_counts.values,
+                               labels={'x': 'Health Index (1-5)', 'y': 'Number of Cables'},
+                               title="Distribution of Health Index",
+                               color=health_counts.index,
+                               color_continuous_scale='RdYlGn')
+            st.plotly_chart(fig_health, use_container_width=True)
+        
+        with col2:
+            risk_counts = cable_df['risk_level'].value_counts()
+            fig_risk = px.pie(values=risk_counts.values, names=risk_counts.index,
+                             title="Risk Level Distribution",
+                             color=risk_counts.index,
+                             color_discrete_map={'Low': '#2ecc71', 'Medium': '#f39c12', 
+                                                'High': '#e74c3c', 'Critical': '#8e44ad'})
+            st.plotly_chart(fig_risk, use_container_width=True)
 
 # ============================================================================
 # PAGE 2: CABLE HEALTH PREDICTOR
@@ -141,75 +187,48 @@ elif page == "🔬 Cable Health Predictor":
     if not models.get('loaded'):
         st.error("❌ Models not loaded. Please run `python arabcab.py` first.")
     else:
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("📍 Cable Info")
-            region = st.selectbox("Region", ["Egypt", "UAE", "Bahrain"])
-            application = st.selectbox("Application", [
-                "Power Transmission (HV)", "Power Distribution (MV)", 
-                "Industrial", "Renewable Energy", "Telecommunications", "Construction/Building"
-            ])
-            voltage_class = st.selectbox("Voltage Class", [
-                "LV (<1kV)", "MV (1-35kV)", "HV (35-150kV)", "EHV (>150kV)"
-            ])
-            cable_age = st.slider("Cable Age (Years)", 1, 50, 15)
-            cable_length = st.number_input("Cable Length (km)", 0.1, 100.0, 5.0)
+            st.subheader("📋 Cable Inspection Data")
+            age = st.slider("Cable Age (Years)", 1, 60, 25)
+            partial_discharge = st.slider("Partial Discharge", 0.0, 1.0, 0.3, 0.01,
+                                         help="Normalized PD measurement (0=best, 1=worst)")
+            visual_condition = st.selectbox("Visual Condition", ["Good", "Medium", "Poor"])
+            neutral_corrosion = st.slider("Neutral Corrosion Index", 0.0, 1.0, 0.5, 0.01,
+                                          help="Corrosion level (0=none, 1=severe)")
+            loading = st.number_input("Loading", 50, 1000, 400,
+                                      help="Cable loading value")
         
         with col2:
-            st.subheader("🌡️ Environment & Operations")
-            soil_corrosivity = st.slider("Soil Corrosivity Index", 0.0, 1.0, 0.7)
-            ambient_temp = st.slider("Ambient Temp (°C)", 15, 50, 35)
-            humidity = st.slider("Humidity (%)", 20, 90, 50)
-            load_factor = st.slider("Load Factor", 0.3, 1.0, 0.75)
-            overload_events = st.number_input("Overload Events (last year)", 0, 20, 2)
-            fault_history = st.number_input("Fault History Count", 0, 15, 1)
-        
-        with col3:
-            st.subheader("🔧 Maintenance & Diagnostics")
-            maintenance_score = st.slider("Maintenance Score", 0.0, 1.0, 0.7)
-            months_since_maint = st.slider("Months Since Maintenance", 1, 36, 12)
-            partial_discharge = st.number_input("Partial Discharge (pC)", 0.0, 100.0, 15.0)
-            insulation_resistance = st.number_input("Insulation Resistance (MΩ)", 100, 6000, 4000)
-            tan_delta = st.number_input("Tan Delta", 0.0005, 0.02, 0.002, format="%.4f")
+            st.subheader("📊 Feature Summary")
+            st.write(f"**Age:** {age} years")
+            st.write(f"**Partial Discharge:** {partial_discharge}")
+            st.write(f"**Visual Condition:** {visual_condition}")
+            st.write(f"**Neutral Corrosion:** {neutral_corrosion}")
+            st.write(f"**Loading:** {loading}")
         
         st.divider()
         
         if st.button("🔮 Predict Cable Health", type="primary", use_container_width=True):
-            # Prepare input data
+            # Prepare input data matching the model's expected features
             input_data = {
-                'cable_age_years': cable_age,
-                'cable_length_km': cable_length,
-                'soil_corrosivity_index': soil_corrosivity,
-                'ambient_temp_C': ambient_temp,
-                'humidity_percent': humidity,
-                'load_factor': load_factor,
-                'overload_events_last_year': overload_events,
-                'fault_history_count': fault_history,
-                'maintenance_score': maintenance_score,
-                'months_since_maintenance': months_since_maint,
-                'partial_discharge_pC': partial_discharge,
-                'insulation_resistance_MOhm': insulation_resistance,
-                'tan_delta': tan_delta,
-                # One-hot encoded categoricals
-                'region_Egypt': 1 if region == 'Egypt' else 0,
-                'region_UAE': 1 if region == 'UAE' else 0,
-                'application_Industrial': 1 if application == 'Industrial' else 0,
-                'application_Power Distribution (MV)': 1 if application == 'Power Distribution (MV)' else 0,
-                'application_Power Transmission (HV)': 1 if application == 'Power Transmission (HV)' else 0,
-                'application_Renewable Energy': 1 if application == 'Renewable Energy' else 0,
-                'application_Telecommunications': 1 if application == 'Telecommunications' else 0,
-                'voltage_class_HV (35-150kV)': 1 if voltage_class == 'HV (35-150kV)' else 0,
-                'voltage_class_LV (<1kV)': 1 if voltage_class == 'LV (<1kV)' else 0,
-                'voltage_class_MV (1-35kV)': 1 if voltage_class == 'MV (1-35kV)' else 0,
+                'Age': age,
+                'Partial Discharge': partial_discharge,
+                'Neutral Corrosion': neutral_corrosion,
+                'Loading': loading,
+                'Visual Condition_Medium': 1 if visual_condition == 'Medium' else 0,
+                'Visual Condition_Poor': 1 if visual_condition == 'Poor' else 0,
             }
             
-            input_df = pd.DataFrame([input_data])
+            # Ensure columns match what model expects
+            feature_names = models['feature_names']
+            input_df = pd.DataFrame([{f: input_data.get(f, 0) for f in feature_names}])
             
             # Predict Health Index
             health_model, health_scaler = models['health']
             health_input = health_scaler.transform(input_df)
-            health_index = float(np.clip(health_model.predict(health_input)[0], 0, 100))
+            health_index = float(np.clip(health_model.predict(health_input)[0], 1, 5))
             
             # Predict Risk Level
             risk_model, risk_scaler, risk_encoder = models['risk']
@@ -222,6 +241,10 @@ elif page == "🔬 Cable Health Predictor":
             urgency_input = urgency_scaler.transform(input_df)
             urgency_years = float(np.clip(urgency_model.predict(urgency_input)[0], 0.5, 15))
             
+            # Calculate XLPE demand
+            urgency_factor = (15 - urgency_years) / 15
+            xlpe_demand = 2.0 * 1.5 * 0.5 * (1 + urgency_factor)
+            
             # Display Results
             st.divider()
             st.subheader("📊 Prediction Results")
@@ -229,20 +252,21 @@ elif page == "🔬 Cable Health Predictor":
             res_col1, res_col2, res_col3 = st.columns(3)
             
             with res_col1:
-                # Health Index Gauge
+                # Health Index Gauge (1-5 scale)
                 fig_health = go.Figure(go.Indicator(
                     mode="gauge+number",
                     value=health_index,
                     domain={'x': [0, 1], 'y': [0, 1]},
-                    title={'text': "Health Index"},
+                    title={'text': "Health Index (1-5)"},
+                    number={'valueformat': '.2f'},
                     gauge={
-                        'axis': {'range': [0, 100]},
+                        'axis': {'range': [1, 5]},
                         'bar': {'color': "darkblue"},
                         'steps': [
-                            {'range': [0, 30], 'color': "#e74c3c"},
-                            {'range': [30, 50], 'color': "#f39c12"},
-                            {'range': [50, 70], 'color': "#f1c40f"},
-                            {'range': [70, 100], 'color': "#2ecc71"}
+                            {'range': [1, 2], 'color': "#e74c3c"},
+                            {'range': [2, 3], 'color': "#f39c12"},
+                            {'range': [3, 4], 'color': "#f1c40f"},
+                            {'range': [4, 5], 'color': "#2ecc71"}
                         ],
                         'threshold': {'line': {'color': "black", 'width': 4}, 
                                       'thickness': 0.75, 'value': health_index}
@@ -255,15 +279,9 @@ elif page == "🔬 Cable Health Predictor":
                 risk_colors = {'Low': '🟢', 'Medium': '🟡', 'High': '🟠', 'Critical': '🔴'}
                 st.metric("Risk Level", f"{risk_colors.get(risk_level, '')} {risk_level}")
                 st.metric("Replacement Urgency", f"{urgency_years:.1f} Years")
-                
-                # Estimated XLPE demand
-                voltage_mult = {'LV (<1kV)': 0.8, 'MV (1-35kV)': 1.5, 'HV (35-150kV)': 3.0, 'EHV (>150kV)': 5.5}
-                urgency_factor = (15 - urgency_years) / 15
-                xlpe_demand = cable_length * voltage_mult[voltage_class] * 0.5 * (1 + urgency_factor)
                 st.metric("Est. XLPE Demand", f"{xlpe_demand:.2f} Tons")
             
             with res_col3:
-                # Recommendation
                 if risk_level == 'Critical':
                     st.error("🚨 **IMMEDIATE ACTION REQUIRED**\nSchedule replacement within 6 months.")
                 elif risk_level == 'High':
@@ -274,35 +292,32 @@ elif page == "🔬 Cable Health Predictor":
                     st.success("✅ **HEALTHY**\nRoutine monitoring sufficient.")
 
 # ============================================================================
-# PAGE 3: REGIONAL DEMAND ANALYSIS
+# PAGE 3: DEMAND ANALYSIS
 # ============================================================================
-elif page == "📊 Regional Demand Analysis":
-    st.header("📊 Regional XLPE Demand Analysis")
+elif page == "📊 Demand Analysis":
+    st.header("📊 XLPE Demand Analysis")
     st.markdown("Aggregated demand data from Model 1 → Input for Model 2 (Market Forecasting)")
     
-    if regional_demand is None:
-        st.error("❌ Run `python arabcab.py` to generate demand data.")
+    if cable_df is None:
+        st.error("❌ Data not loaded.")
     else:
-        # Regional Summary
-        st.subheader("🌍 XLPE Demand by Region")
+        # Risk Level Demand
+        st.subheader("⚠️ XLPE Demand by Risk Level")
         
-        region_summary = regional_demand.groupby('region').agg({
-            'total_xlpe_tons': 'sum',
-            'cable_count': 'sum',
-            'avg_health': 'mean'
-        }).reset_index()
-        region_summary.columns = ['Region', 'Total XLPE (Tons)', 'Cables Assessed', 'Avg Health Index']
-        
-        col1, col2 = st.columns([1, 2])
-        
-        with col1:
-            st.dataframe(region_summary.round(2), use_container_width=True, hide_index=True)
-        
-        with col2:
-            fig = px.pie(region_summary, values='Total XLPE (Tons)', names='Region',
-                        title="XLPE Demand Distribution by Region",
-                        color_discrete_sequence=px.colors.qualitative.Set2)
-            st.plotly_chart(fig, use_container_width=True)
+        if risk_demand is not None:
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                st.dataframe(risk_demand.round(2), use_container_width=True, hide_index=True)
+            
+            with col2:
+                fig = px.bar(risk_demand, x='risk_level', y='total_xlpe_tons',
+                            color='risk_level',
+                            color_discrete_map={'Low': '#2ecc71', 'Medium': '#f39c12', 
+                                               'High': '#e74c3c', 'Critical': '#8e44ad'},
+                            title="XLPE Demand by Risk Level",
+                            labels={'total_xlpe_tons': 'XLPE Demand (Tons)', 'risk_level': 'Risk Level'})
+                st.plotly_chart(fig, use_container_width=True)
         
         st.divider()
         
@@ -310,24 +325,31 @@ elif page == "📊 Regional Demand Analysis":
         st.subheader("⏰ Demand by Replacement Urgency")
         
         if urgency_demand is not None:
-            fig_urgency = px.bar(urgency_demand, x='urgency_band', y='xlpe_demand_tons',
-                                 color='region', barmode='group',
-                                 title="XLPE Demand by Urgency Band",
-                                 labels={'xlpe_demand_tons': 'XLPE Demand (Tons)', 
-                                        'urgency_band': 'Replacement Timeline'})
-            st.plotly_chart(fig_urgency, use_container_width=True)
+            col1, col2 = st.columns([1, 2])
             
-            # Summary table
-            st.dataframe(urgency_demand, use_container_width=True, hide_index=True)
+            with col1:
+                st.dataframe(urgency_demand.round(2), use_container_width=True, hide_index=True)
+            
+            with col2:
+                fig_urgency = px.bar(urgency_demand, x='urgency_band', y='xlpe_demand_tons',
+                                    title="XLPE Demand by Urgency Timeline",
+                                    labels={'xlpe_demand_tons': 'XLPE Demand (Tons)', 
+                                           'urgency_band': 'Replacement Timeline'},
+                                    color='xlpe_demand_tons',
+                                    color_continuous_scale='Reds')
+                st.plotly_chart(fig_urgency, use_container_width=True)
         
         st.divider()
         
-        # Quarterly Trend
-        st.subheader("📅 Quarterly Demand Trend")
-        regional_demand['period'] = regional_demand['year'].astype(str) + '-Q' + regional_demand['quarter'].astype(str)
-        fig_trend = px.line(regional_demand, x='period', y='total_xlpe_tons', color='region',
-                           markers=True, title="XLPE Demand Over Time by Region")
-        st.plotly_chart(fig_trend, use_container_width=True)
+        # Summary Stats
+        st.subheader("📈 Summary Statistics")
+        total_demand = cable_df['xlpe_demand_tons'].sum()
+        critical_demand = cable_df[cable_df['risk_level'] == 'Critical']['xlpe_demand_tons'].sum()
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total XLPE Demand", f"{total_demand:,.0f} Tons")
+        col2.metric("Critical Cable Demand", f"{critical_demand:,.0f} Tons")
+        col3.metric("% Critical", f"{(critical_demand/total_demand)*100:.1f}%")
 
 # ============================================================================
 # PAGE 4: MODEL EXPLAINABILITY
@@ -349,27 +371,7 @@ elif page == "🧠 Model Explainability":
         - **Magnitude** → Strength of impact (per 1 standard deviation change)
         """)
         
-        # Top positive and negative features
-        top_positive = coef_df[coef_df['coefficient'] > 0].nlargest(5, 'coefficient')
-        top_negative = coef_df[coef_df['coefficient'] < 0].nsmallest(5, 'coefficient')
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.success("**✅ Factors that IMPROVE Health:**")
-            for _, row in top_positive.iterrows():
-                st.write(f"↑ **{row['feature']}**: +{row['coefficient']:.3f}")
-        
-        with col2:
-            st.error("**❌ Factors that DEGRADE Health:**")
-            for _, row in top_negative.iterrows():
-                st.write(f"↓ **{row['feature']}**: {row['coefficient']:.3f}")
-        
-        st.divider()
-        
-        # Full coefficient chart
-        st.subheader("📈 All Feature Coefficients")
-        
+        # Feature coefficient chart
         coef_sorted = coef_df.sort_values('coefficient')
         colors = ['#e74c3c' if x < 0 else '#2ecc71' for x in coef_sorted['coefficient']]
         
@@ -383,29 +385,86 @@ elif page == "🧠 Model Explainability":
             title="Health Index Model Coefficients",
             xaxis_title="Coefficient Value",
             yaxis_title="Feature",
-            height=600
+            height=400
         )
         st.plotly_chart(fig, use_container_width=True)
+        
+        # Coefficient table
+        st.subheader("📋 Coefficient Details")
+        st.dataframe(coef_df.round(4), use_container_width=True, hide_index=True)
         
         # Business Insights
         st.divider()
         st.subheader("💡 Business Insights from Model")
         
         st.info("""
-        **Key Findings for Cable Asset Management:**
+        **Key Findings for 15-KV Cable Asset Management:**
         
-        1. **Cable Age** is the strongest predictor of health degradation (-9.47 points per std dev)
-        2. **Fault History** significantly impacts health - each historical fault matters (-7.08)
-        3. **Partial Discharge** readings are critical diagnostic indicators (-5.61)
-        4. **Insulation Resistance** is the best positive indicator (+3.85)
-        5. **Maintenance Quality** directly improves cable lifespan (+2.37)
+        Based on the model coefficients, the factors affecting cable health are:
+        
+        1. **Partial Discharge** - Higher PD readings indicate insulation degradation
+        2. **Neutral Corrosion** - Corrosion directly damages cable integrity
+        3. **Age** - Older cables naturally have lower health indices
+        4. **Visual Condition** - Physical inspection results correlate with health
+        5. **Loading** - Higher loads can accelerate cable wear
         
         **Actionable Recommendations:**
-        - Prioritize maintenance for cables with high PD readings
-        - Focus replacement planning on cables >20 years old with fault history
-        - Invest in insulation monitoring for early degradation detection
+        - Prioritize replacement for cables with high PD (>0.5) and corrosion (>0.7)
+        - Focus on cables >30 years old with Poor visual condition
+        - Regular monitoring of high-load cables (>500)
         """)
+
+# ============================================================================
+# PAGE 5: DATA EXPLORER
+# ============================================================================
+elif page == "📋 Data Explorer":
+    st.header("📋 Cable Data Explorer")
+    
+    if cable_df is None:
+        st.error("❌ Data not loaded.")
+    else:
+        st.subheader("🔍 Filter Data")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            age_range = st.slider("Age Range", 
+                                  int(cable_df['Age'].min()), 
+                                  int(cable_df['Age'].max()),
+                                  (int(cable_df['Age'].min()), int(cable_df['Age'].max())))
+        
+        with col2:
+            health_filter = st.multiselect("Health Index", 
+                                           options=sorted(cable_df['Health Index'].unique()),
+                                           default=sorted(cable_df['Health Index'].unique()))
+        
+        with col3:
+            risk_filter = st.multiselect("Risk Level",
+                                         options=['Low', 'Medium', 'High', 'Critical'],
+                                         default=['Low', 'Medium', 'High', 'Critical'])
+        
+        # Filter data
+        filtered_df = cable_df[
+            (cable_df['Age'] >= age_range[0]) & 
+            (cable_df['Age'] <= age_range[1]) &
+            (cable_df['Health Index'].isin(health_filter)) &
+            (cable_df['risk_level'].isin(risk_filter))
+        ]
+        
+        st.write(f"**Showing {len(filtered_df)} of {len(cable_df)} cables**")
+        
+        # Display data
+        st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+        
+        # Download button
+        csv = filtered_df.to_csv(index=False)
+        st.download_button(
+            label="📥 Download Filtered Data",
+            data=csv,
+            file_name="filtered_cable_data.csv",
+            mime="text/csv"
+        )
 
 # --- FOOTER ---
 st.divider()
-st.caption("⚡ CableFlow AI | ARABCAB Scientific Competition 2026 | Model 1: Utility Health Prediction")
+st.caption("⚡ CableFlow AI | ARABCAB Scientific Competition 2026 | Using Real 15-KV XLPE Cable Data")

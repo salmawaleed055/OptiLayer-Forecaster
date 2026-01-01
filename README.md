@@ -23,7 +23,7 @@
 - `arabcab.py`: The "Engine Room" where the XGBoost model is trained and saved.
 - `Dashboard.py`: The Streamlit application providing the interactive UI.
 - `models/`: Contains the serialized AI brain (`.pkl` files).
-- `utility_cable_data.csv`: Validated sample data used for the Proof of Concept[cite: 73, 188].
+- `utility_cable_data.csv`: Validated sample data used for the Proof of Concept.
 
 
 

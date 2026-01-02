@@ -73,13 +73,21 @@ def load_data():
             risk_demand = None
             urgency_demand = None
             
-        return cable_df, risk_demand, urgency_demand
+        try:
+            forecast_df = pd.read_csv("outputs/model2_adjusted_forecast.csv")
+        except:
+            forecast_df = None
+
+        return cable_df, risk_demand, urgency_demand, forecast_df
+            
+
     except Exception as e:
         st.error(f"Error loading data: {e}")
         return None, None, None
 
 models = load_models()
-cable_df, risk_demand, urgency_demand = load_data()
+cable_df, risk_demand, urgency_demand, forecast_df = load_data()
+
 
 # --- HEADER ---
 st.title("⚡ CableFlow-AI: 15-KV XLPE Cable Health Dashboard")
@@ -90,11 +98,13 @@ st.divider()
 st.sidebar.header("🎛️ Navigation")
 page = st.sidebar.radio("Select View", [
     "🏠 Overview",
-    "🔬 Cable Health Predictor", 
+    "🔬 Cable Health Predictor",
     "📊 Demand Analysis",
+    "📈 Market Forecast (Model 2)", 
     "🧠 Model Explainability",
     "📋 Data Explorer"
 ])
+
 
 # ============================================================================
 # PAGE 1: OVERVIEW
@@ -464,6 +474,130 @@ elif page == "📋 Data Explorer":
             file_name="filtered_cable_data.csv",
             mime="text/csv"
         )
+elif page == "📈 Market Forecast (Model 2)":
+    st.header("📈 XLPE Market Forecast (Model 2)")
+    st.markdown("Hybrid rule-based baseline + ML-inspired trend adjustment")
+
+    if forecast_df is None:
+        st.error("❌ Run `python model2_market_forecast.py` first.")
+    else:
+        # -----------------------------
+        # SLIDERS (USER-CONTROLLED ASSUMPTIONS)
+        # -----------------------------
+        st.subheader("🎛️ Market Assumptions")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            pe_price_index = st.slider(
+                "Polyethylene Price Index",
+                80, 140, 110,
+                help="Relative price index (100 = historical average)"
+            )
+
+        with col2:
+            grid_growth = st.slider(
+                "Grid Expansion Rate (%)",
+                1.0, 10.0, 5.0,
+                step=0.5,
+                help="Annual power grid expansion rate"
+            ) / 100
+
+        with col3:
+            supply_delay = st.slider(
+                "Supply Chain Delay (weeks)",
+                0, 12, 2,
+                help="Average delivery delay"
+            )
+
+        # -----------------------------
+        # TREND FUNCTION (EXPLAINABLE)
+        # -----------------------------
+        def compute_trend_factor(price, growth, delay):
+            trend = 0
+
+            if price > 100:
+                trend -= 0.05
+            else:
+                trend += 0.03
+
+            if growth > 0.04:
+                trend += 0.07
+            else:
+                trend -= 0.02
+
+            if delay > 4:
+                trend -= 0.04
+
+            return trend
+
+        trend_factor = compute_trend_factor(
+            pe_price_index,
+            grid_growth,
+            supply_delay
+        )
+
+        # -----------------------------
+        # APPLY LIVE ADJUSTMENT
+        # -----------------------------
+        adjusted_df = forecast_df.copy()
+        adjusted_df["Live_Adjusted_Demand"] = (
+            adjusted_df["Baseline_XLPE_Demand_Tons"]
+            * (1 + trend_factor)
+        ).round(2)
+
+        # -----------------------------
+        # KPIs
+        # -----------------------------
+        st.divider()
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric(
+            "Trend Adjustment",
+            f"{trend_factor*100:+.1f}%"
+        )
+
+        col2.metric(
+            "Peak Demand (Tons)",
+            f"{adjusted_df['Live_Adjusted_Demand'].max():,.0f}"
+        )
+
+        col3.metric(
+            "Total Forecast Demand",
+            f"{adjusted_df['Live_Adjusted_Demand'].sum():,.0f} Tons"
+        )
+
+        # -----------------------------
+        # LINE CHART
+        # -----------------------------
+        st.subheader("📈 XLPE Market Demand Forecast")
+
+        fig = px.line(
+            adjusted_df,
+            x="Year",
+            y="Live_Adjusted_Demand",
+            markers=True,
+            title="XLPE Market Demand Forecast (Live Scenario)",
+            labels={
+                "Live_Adjusted_Demand": "XLPE Demand (Tons)"
+            }
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # -----------------------------
+        # DATA TABLE
+        # -----------------------------
+        with st.expander("📋 View Forecast Table"):
+            st.dataframe(
+                adjusted_df[[
+                    "Year",
+                    "Baseline_XLPE_Demand_Tons",
+                    "Live_Adjusted_Demand"
+                ]],
+                use_container_width=True
+            )
+
 
 # --- FOOTER ---
 st.divider()

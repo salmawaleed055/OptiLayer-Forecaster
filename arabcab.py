@@ -59,8 +59,8 @@ def load_data(filepath):
     df = pd.read_excel(filepath)
     df.columns = df.columns.str.strip()  # Clean column names
     
-    print(f"✅ Loaded {len(df)} cable records from {filepath}")
-    print(f"✅ Columns: {df.columns.tolist()}")
+    print(f"[OK] Loaded {len(df)} cable records from {filepath}")
+    print(f"[OK] Columns: {df.columns.tolist()}")
     
     # One-hot encode Visual Condition
     df_encoded = pd.get_dummies(df, columns=CATEGORICAL_FEATURES, drop_first=True)
@@ -70,7 +70,7 @@ def load_data(filepath):
     for cat in CATEGORICAL_FEATURES:
         feature_cols.extend([c for c in df_encoded.columns if c.startswith(cat)])
     
-    print(f"✅ Features for model: {feature_cols}")
+    print(f"[OK] Features for model: {feature_cols}")
     
     # Add derived columns
     # Risk Level based on Health Index (1-5 scale)
@@ -98,10 +98,10 @@ def load_data(filepath):
     df['xlpe_demand_tons'] = (cable_length_km * voltage_multiplier * 0.5 * (1 + urgency_factor)).round(2)
     df_encoded['xlpe_demand_tons'] = df['xlpe_demand_tons']
     
-    print(f"\n📊 Health Index Distribution:")
+    print(f"\n[STATS] Health Index Distribution:")
     print(df['Health Index'].value_counts().sort_index().to_string())
     
-    print(f"\n📊 Risk Level Distribution:")
+    print(f"\n[STATS] Risk Level Distribution:")
     print(df['risk_level'].value_counts().to_string())
     
     return df, df_encoded, feature_cols
@@ -135,7 +135,7 @@ def train_health_model(df_encoded, feature_cols):
         'cv_r2': cross_val_score(model, X_train_scaled, y_train, cv=5, scoring='r2').mean()
     }
     
-    print(f"\n📊 HEALTH INDEX MODEL PERFORMANCE:")
+    print(f"\n[PERFORMANCE] HEALTH INDEX MODEL PERFORMANCE:")
     print(f"   R² Score:     {metrics['r2']:.4f}")
     print(f"   MAE:          {metrics['mae']:.3f} (on 1-5 scale)")
     print(f"   RMSE:         {metrics['rmse']:.3f}")
@@ -148,10 +148,10 @@ def train_health_model(df_encoded, feature_cols):
         'abs_importance': np.abs(model.coef_)
     }).sort_values('abs_importance', ascending=False)
     
-    print("\n📊 FEATURE IMPORTANCE (Explainable AI):")
+    print("\n[ANALYSIS] FEATURE IMPORTANCE (Explainable AI):")
     print("   (+ improves health, - degrades health)\n")
     for _, row in coef_df.iterrows():
-        sign = "↑" if row['coefficient'] > 0 else "↓"
+        sign = "+" if row['coefficient'] > 0 else "-"
         print(f"   {sign} {row['feature']:<25} {row['coefficient']:>8.4f}")
     
     return model, scaler, metrics, coef_df
@@ -181,7 +181,7 @@ def train_risk_model(df_encoded, feature_cols):
     y_pred = model.predict(X_test_scaled)
     accuracy = accuracy_score(y_test, y_pred)
     
-    print(f"\n📊 RISK CLASSIFIER ACCURACY: {accuracy:.2%}")
+    print(f"\n[PERFORMANCE] RISK CLASSIFIER ACCURACY: {accuracy:.2%}")
     print("\nClassification Report:")
     print(classification_report(y_test, y_pred, target_names=le.classes_))
     
@@ -214,7 +214,7 @@ def train_urgency_model(df_encoded, feature_cols):
         'rmse': np.sqrt(mean_squared_error(y_test, y_pred))
     }
     
-    print(f"\n📊 URGENCY MODEL PERFORMANCE:")
+    print(f"\n[PERFORMANCE] URGENCY MODEL PERFORMANCE:")
     print(f"   R² Score: {metrics['r2']:.4f}")
     print(f"   MAE:      {metrics['mae']:.2f} years")
     print(f"   RMSE:     {metrics['rmse']:.2f} years")
@@ -267,17 +267,17 @@ def aggregate_for_model2(df):
     risk_demand.to_csv('model2_risk_demand.csv', index=False)
     urgency_demand.to_csv('model2_urgency_demand.csv', index=False)
     
-    print("\n📊 XLPE DEMAND BY RISK LEVEL:")
+    print("\n[STATS] XLPE DEMAND BY RISK LEVEL:")
     print(risk_demand.to_string(index=False))
     
-    print("\n📊 XLPE DEMAND BY URGENCY:")
+    print("\n[STATS] XLPE DEMAND BY URGENCY:")
     print(urgency_demand.to_string(index=False))
     
-    print(f"\n📊 TOTAL XLPE DEMAND: {df['xlpe_demand_tons'].sum():.2f} tons")
+    print(f"\n[STATS] TOTAL XLPE DEMAND: {df['xlpe_demand_tons'].sum():.2f} tons")
     
-    print("\n✅ Saved: model2_health_demand.csv")
-    print("✅ Saved: model2_risk_demand.csv")
-    print("✅ Saved: model2_urgency_demand.csv")
+    print("\n[SAVED] model2_health_demand.csv")
+    print("[SAVED] model2_risk_demand.csv")
+    print("[SAVED] model2_urgency_demand.csv")
     
     return health_demand, risk_demand, urgency_demand
 
@@ -311,7 +311,7 @@ def save_models(health_model, health_scaler, health_coef,
     joblib.dump(feature_cols, f'{MODEL_DIR}/feature_names.pkl')
     health_coef.to_csv(f'{MODEL_DIR}/health_coefficients.csv', index=False)
     
-    print("✅ All models saved to 'models/' directory")
+    print("[OK] All models saved to 'models/' directory")
 
 # ============================================================================
 # MAIN
@@ -354,8 +354,8 @@ def main():
     │  • R²: {urgency_metrics['r2']:.4f}  • MAE: {urgency_metrics['mae']:.2f} yrs              │
     └────────────────────────────────────────────────────────┘
     """)
-    print("🎯 Model 1 outputs ready for Model 2 (Market Demand)")
-    print("🎯 Dashboard can now use these models for predictions")
+    print("[COMPLETE] Model 1 outputs ready for Model 2 (Market Demand)")
+    print("[COMPLETE] Dashboard can now use these models for predictions")
     
     return {'health': health_metrics, 'risk_acc': risk_acc, 'urgency': urgency_metrics}
 

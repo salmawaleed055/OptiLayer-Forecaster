@@ -1,8 +1,8 @@
 # ARABCAB SCIENTIFIC COMPETITION - FINAL REPORT
 ## AI-Based Demand Forecasting & Inventory Optimization for XLPE Cable Materials
 
-**Team:** [Your University Name]  
-**Date:** January 8, 2026  
+**Team:** American University in Cairo
+**Date:** January 18, 2026  
 **Material Focus:** XLPE (Cross-Linked Polyethylene) - Polymer Layer for 15-KV Cables
 
 ---

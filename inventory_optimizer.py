@@ -332,7 +332,7 @@ def main():
         print("[WARNING] Model 2 forecast not found. Using Model 1 aggregated data.")
         # Use aggregated demand from Model 1
         try:
-            risk_df = pd.read_csv('model2_risk_demand.csv')
+            risk_df = pd.read_csv('data/model2_risk_demand.csv')
             total_demand = risk_df['total_xlpe_tons'].sum()
             forecast_df = pd.DataFrame({
                 'year': range(2026, 2031),
@@ -350,7 +350,7 @@ def main():
     
     # Risk-stratified optimization (if risk data available)
     try:
-        risk_df = pd.read_csv('model2_risk_demand.csv')
+        risk_df = pd.read_csv('data/model2_risk_demand.csv')
         risk_results, total_cost = optimize_by_risk_level(risk_df)
         
         # Save risk-stratified results

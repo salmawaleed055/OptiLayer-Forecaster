@@ -263,9 +263,9 @@ def aggregate_for_model2(df):
     urgency_demand.columns = ['urgency_band', 'xlpe_demand_tons', 'cable_count']
     
     # Save for Model 2
-    health_demand.to_csv('model2_health_demand.csv', index=False)
-    risk_demand.to_csv('model2_risk_demand.csv', index=False)
-    urgency_demand.to_csv('model2_urgency_demand.csv', index=False)
+    health_demand.to_csv('data/model2_health_demand.csv', index=False)
+    risk_demand.to_csv('data/model2_risk_demand.csv', index=False)
+    urgency_demand.to_csv('data/model2_urgency_demand.csv', index=False)
     
     print("\n[STATS] XLPE DEMAND BY RISK LEVEL:")
     print(risk_demand.to_string(index=False))
@@ -275,9 +275,9 @@ def aggregate_for_model2(df):
     
     print(f"\n[STATS] TOTAL XLPE DEMAND: {df['xlpe_demand_tons'].sum():.2f} tons")
     
-    print("\n[SAVED] model2_health_demand.csv")
-    print("[SAVED] model2_risk_demand.csv")
-    print("[SAVED] model2_urgency_demand.csv")
+    print("\n[SAVED] data/model2_health_demand.csv")
+    print("[SAVED] data/model2_risk_demand.csv")
+    print("[SAVED] data/model2_urgency_demand.csv")
     
     return health_demand, risk_demand, urgency_demand
 

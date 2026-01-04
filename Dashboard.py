@@ -67,8 +67,8 @@ def load_data():
         
         # Load aggregated demand files
         try:
-            risk_demand = pd.read_csv('model2_risk_demand.csv')
-            urgency_demand = pd.read_csv('model2_urgency_demand.csv')
+            risk_demand = pd.read_csv('data/model2_risk_demand.csv')
+            urgency_demand = pd.read_csv('data/model2_urgency_demand.csv')
         except:
             risk_demand = None
             urgency_demand = None
